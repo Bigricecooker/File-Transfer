@@ -41,6 +41,7 @@ struct DownloadReq
 struct DownloadRsp
 {
     uint64_t fileSize;        // 文件总大小（网络字节序）
+    uint32_t crc32;           // 文件CRC32（网络字节序）
 };
 
 // 下载数据包头

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 #include <QByteArray>
+#include <mutex>
 /// <summary>
 /// 包头结构，包含消息ID和消息体长度，一共6字节
 /// </summary>
@@ -46,6 +47,7 @@ struct DownloadReq
 struct DownloadRsp
 {
     uint64_t fileSize;// 文件总大小（网络字节序）
+    uint32_t crc32;// 文件CRC32（网络字节序）
 };
 
 /// <summary>
@@ -74,6 +76,7 @@ enum MsgID
 
 
 const int chunkSize = 5 * 1024 * 1024; // 5 MB
+const size_t FTA_MAX_PAYLOAD = 16 * 1024 * 1024; // 16MB 最大消息体
 
 /// <summary>
 /// 发送消息
@@ -96,11 +99,19 @@ bool sendPacket(SOCKET sock, uint16_t id, const void* data, uint32_t len);
 bool recvPacket(SOCKET sock, uint16_t& out_id, std::vector<char>& out_data, std::vector<char>& recvBuf);
 
 /// <summary>
-/// CRC32校验计算
+/// 流式CRC32计算，避免将整个文件加载到内存
 /// </summary>
-/// <param name="data"></param>
-/// <returns></returns>
-uint32_t calculateCRC32(const QByteArray& data);
+class CRC32
+{
+public:
+    CRC32();
+    void update(const void* data, size_t len);
+    uint32_t final();
+private:
+    static uint32_t s_table[256];
+    static std::once_flag s_tableInit;
+    uint32_t m_crc;
+};
 
 
 

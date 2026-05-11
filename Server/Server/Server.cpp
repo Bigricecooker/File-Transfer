@@ -86,16 +86,15 @@ namespace
 			return 0;
 
 		static uint32_t table[256];
-		static bool init = false;
-		if (!init) {
+		static std::once_flag tableInit;
+		std::call_once(tableInit, []() {
 			for (int i = 0; i < 256; ++i) {
 				uint32_t c = i;
 				for (int j = 0; j < 8; ++j)
 					c = (c & 1) ? (c >> 1) ^ 0xEDB88320 : (c >> 1);
 				table[i] = c;
 			}
-			init = true;
-		}
+		});
 
 		uint32_t crc = 0xFFFFFFFF;
 		uint8_t buf[65536];
@@ -124,7 +123,8 @@ void Server::init()
 {
 	// 加载用户认证信息
 	MyCProFile usersIni;
-	usersIni.LoadFromFile("users.ini");
+	if (!usersIni.LoadFromFile("users.ini"))
+		std::cerr << "Warning: users.ini not found or invalid, all logins will be rejected" << std::endl;
 	m_users = usersIni.GetKeyValueMapBySection("users");
 }
 
@@ -416,21 +416,27 @@ void Server::HandleWritable(SOCKET s)
 
 void Server::DisconnectClient(SOCKET s, const char* reason)
 {
-	WriteLog("[DISCONNECT] sock=%llu reason=%s", (unsigned long long)s, reason ? reason : "unknown");
+	std::string user;
+	{
+		std::lock_guard<std::mutex> lk(m_clientsMtx);
+		auto it = m_clients.find(s);
+		if (it == m_clients.end())
+			return;
 
-	std::lock_guard<std::mutex> lk(m_clientsMtx);
-	auto it = m_clients.find(s);
-	if (it == m_clients.end())
-		return;
+		std::lock_guard<std::mutex> ctxLk(it->second->mtx);
+		user = it->second->user;
 
-	std::lock_guard<std::mutex> ctxLk(it->second->mtx);
-	if (it->second->uploadFileHandle != INVALID_HANDLE_VALUE)
-		CloseHandle(it->second->uploadFileHandle);
-	if (it->second->downloadFileHandle != INVALID_HANDLE_VALUE)
-		CloseHandle(it->second->downloadFileHandle);
+		if (it->second->uploadFileHandle != INVALID_HANDLE_VALUE)
+			CloseHandle(it->second->uploadFileHandle);
+		if (it->second->downloadFileHandle != INVALID_HANDLE_VALUE)
+			CloseHandle(it->second->downloadFileHandle);
 
-	closesocket(s);
-	m_clients.erase(it);
+		closesocket(s);
+		m_clients.erase(it);
+	}
+
+	WriteLog("[DISCONNECT] sock=%llu user=%s reason=%s", (unsigned long long)s, user.empty() ? "unknown" : user.c_str(), reason ? reason : "unknown");
+	printf("[%s] [DISCONNECT] sock=%llu user=%s reason=%s\n", GetDateTimeStr().c_str(), (unsigned long long)s, user.empty() ? "unknown" : user.c_str(), reason ? reason : "unknown");
 }
 
 bool Server::ReadIntoBuffer(ClientContext& ctx)
@@ -580,6 +586,7 @@ void Server::HandleLogin(Task& task, ClientContext& ctx)
 	bool ok = (m_users.find(user) != m_users.end() && m_users[user] == pass);
 
 	WriteLog("[LOGIN] sock=%llu user=%s result=%s", (unsigned long long)ctx.sock, user.c_str(), ok ? "OK" : "FAIL");
+	printf("[%s] [LOGIN] sock=%llu user=%s result=%s\n", GetDateTimeStr().c_str(), (unsigned long long)ctx.sock, user.c_str(), ok ? "OK" : "FAIL");
 
 	// 更新客户端认证状态
 	std::lock_guard<std::mutex> ctxLk(ctx.mtx);
@@ -699,17 +706,17 @@ void Server::HandleUploadReq(Task& task, ClientContext& ctx)
 	// 设置上传状态
 	ctx.uploading = true;
 	ctx.uploadFileName = wFileName;
-	ctx.uploadTotalSize = ntohll(req.fileSize);
+	ctx.uploadTotalSize = totalSize;
 	ctx.uploadReceived = 0;
 	ctx.expectedCrc = ntohl(req.crc32);
 	ctx.uploadFileHandle = hFile;
 
 	WriteLog("[UPLOAD_REQ] sock=%llu file=%s size=%llu crc=%08X",
 		(unsigned long long)ctx.sock, rawName.c_str(),
-		(unsigned long long)ntohll(req.fileSize), ntohl(req.crc32));
+		(unsigned long long)totalSize, ntohl(req.crc32));
 	printf("[%s] [RECV UPLOAD_REQ] file=%s size=%llu crc=%08X\n",
 		GetDateTimeStr().c_str(), rawName.c_str(),
-		(unsigned long long)ntohll(req.fileSize), ntohl(req.crc32));
+		(unsigned long long)totalSize, ntohl(req.crc32));
 
 	// 回复成功
 	MsgHeader hdr;
@@ -748,14 +755,23 @@ void Server::HandleUploadData(Task& task, ClientContext& ctx)
 	const char* fileData = payload + sizeof(UploadDataHeader);
 	uint32_t fileDataLen = payloadLen - sizeof(UploadDataHeader);
 
+	// 检查分片是否越界
+	uint64_t writeOffset = (uint64_t)seq * CHUNKSIZE;
+	if (writeOffset + fileDataLen > ctx.uploadTotalSize) {
+		WriteLog("[UPLOAD_DATA] sock=%llu OUT OF BOUNDS seq=%u offset=%llu size=%u total=%llu",
+			(unsigned long long)ctx.sock, seq, (unsigned long long)writeOffset,
+			fileDataLen, (unsigned long long)ctx.uploadTotalSize);
+		return;
+	}
+
 	WriteLog("[UPLOAD_DATA] sock=%llu file=%S seq=%u dataSize=%u offset=%llu",
 		(unsigned long long)ctx.sock, ctx.uploadFileName.c_str(),
-		seq, fileDataLen, (unsigned long long)((uint64_t)seq * CHUNKSIZE));
+		seq, fileDataLen, (unsigned long long)writeOffset);
 	printf("[%s] [RECV UPLOAD_DATA] seq=%u dataSize=%u\n",
 		GetDateTimeStr().c_str(), seq, fileDataLen);
 
 	LARGE_INTEGER offset;
-	offset.QuadPart = (LONGLONG)seq * CHUNKSIZE; // 计算当前分片的偏移位置
+	offset.QuadPart = (LONGLONG)writeOffset; // 计算当前分片的偏移位置
 
 	// 移动文件指针到正确位置
 	SetFilePointerEx(ctx.uploadFileHandle, offset, NULL, FILE_BEGIN);
@@ -785,10 +801,20 @@ void Server::HandleUploadData(Task& task, ClientContext& ctx)
 				(unsigned long long)ctx.sock, ctx.uploadFileName.c_str(),
 				(unsigned long long)ctx.uploadTotalSize, ctx.expectedCrc, actualCrc);
 			DeleteFileW(fullPath.c_str());
+			MsgHeader errHdr;
+			errHdr.id = htons(MSG_RESP_ERR);
+			errHdr.len = htonl(0);
+			const uint8_t* pErr = reinterpret_cast<const uint8_t*>(&errHdr);
+			ctx.sendBuf.insert(ctx.sendBuf.end(), pErr, pErr + sizeof(errHdr));
 		} else {
 			WriteLog("[UPLOAD_DONE] sock=%llu file=%S size=%llu crc=OK",
 				(unsigned long long)ctx.sock, ctx.uploadFileName.c_str(),
 				(unsigned long long)ctx.uploadTotalSize);
+			MsgHeader okHdr;
+			okHdr.id = htons(MSG_RESP_OK);
+			okHdr.len = htonl(0);
+			const uint8_t* pOk = reinterpret_cast<const uint8_t*>(&okHdr);
+			ctx.sendBuf.insert(ctx.sendBuf.end(), pOk, pOk + sizeof(okHdr));
 		}
 	}
 }
@@ -834,7 +860,8 @@ void Server::HandleRefreshReq(Task& task, ClientContext& ctx)
 	const uint8_t* hdrPtr = reinterpret_cast<const uint8_t*>(&respHeader);
 	ctx.sendBuf.insert(ctx.sendBuf.end(), hdrPtr, hdrPtr + sizeof(respHeader));
 
-	WriteLog("[FILE_LIST] sock=%llu count=%zu", (unsigned long long)ctx.sock, files.size());
+	WriteLog("[FILE_LIST] sock=%llu user=%s count=%zu", (unsigned long long)ctx.sock, ctx.user.c_str(), files.size());
+	printf("[%s] [FILE_LIST] sock=%llu user=%s count=%zu\n", GetDateTimeStr().c_str(), (unsigned long long)ctx.sock, ctx.user.c_str(), files.size());
 
 	// 附加包体（文件列表数据）
 	if (!files.empty())
@@ -936,14 +963,18 @@ void Server::HandleDownloadReq(Task& task, ClientContext& ctx)
 		return;
 	}
 
-	// 回复成功响应（包含文件大小等信息）
+        // 计算文件CRC32用于校验
+        uint32_t fileCrc32 = CalculateFileCRC32(fullPath);
+
+        // 回复成功响应（包含文件大小和CRC32）
 	MsgHeader hdr;
 	hdr.id = htons(MSG_RESP_OK);
 	hdr.len = htonl(sizeof(DownloadRsp));
 	const uint8_t* p = reinterpret_cast<const uint8_t*>(&hdr);
 	ctx.sendBuf.insert(ctx.sendBuf.end(), p, p + sizeof(hdr));
 	DownloadRsp rsp;
-	rsp.fileSize = htonll(fileSize);          
+	rsp.fileSize = htonll(fileSize);
+	rsp.crc32 = htonl(fileCrc32);
 	const uint8_t* pRsp = reinterpret_cast<const uint8_t*>(&rsp);
 	ctx.sendBuf.insert(ctx.sendBuf.end(), pRsp, pRsp + sizeof(rsp));
 
@@ -955,10 +986,10 @@ void Server::HandleDownloadReq(Task& task, ClientContext& ctx)
 	ctx.downloadSeq = 0;
 	ctx.downloadFileHandle = hFile;
 
-	WriteLog("[DOWNLOAD_REQ] sock=%llu file=%s size=%llu",
-		(unsigned long long)ctx.sock, rawName.c_str(), (unsigned long long)fileSize);
-	printf("[%s] [RECV DOWNLOAD_REQ] file=%s size=%llu\n",
-		GetDateTimeStr().c_str(), rawName.c_str(), (unsigned long long)fileSize);
+	WriteLog("[DOWNLOAD_REQ] sock=%llu file=%s size=%llu crc=%08X",
+		(unsigned long long)ctx.sock, rawName.c_str(), (unsigned long long)fileSize, fileCrc32);
+	printf("[%s] [RECV DOWNLOAD_REQ] file=%s size=%llu crc=%08X\n",
+		GetDateTimeStr().c_str(), rawName.c_str(), (unsigned long long)fileSize, fileCrc32);
 
 	QueueNextDownloadChunk(ctx);
 }

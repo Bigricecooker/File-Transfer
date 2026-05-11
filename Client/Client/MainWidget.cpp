@@ -166,17 +166,24 @@ void MainWidget::onUploadClicked()
         QString fileName = QFileInfo(filePath).fileName();
         QByteArray fileNameUtf8 = fileName.toUtf8();
 
-        QByteArray fileData = file.readAll();
-        uint32_t crc32 = calculateCRC32(fileData);
+        CRC32 crc32;
+        char buf[65536];
+        while (!file.atEnd()) {
+            qint64 n = file.read(buf, sizeof(buf));
+            if (n <= 0) break;
+            crc32.update(buf, static_cast<size_t>(n));
+        }
+        uint32_t crc32Val = crc32.final();
         file.seek(0);
 
         {
             std::lock_guard<std::mutex> lock(m_ioMtx);
+            m_recvBuffer.clear();
 
             UploadReq req = {};
             strncpy_s(req.fileName, sizeof(req.fileName), fileNameUtf8.constData(), sizeof(req.fileName) - 1);
             req.fileSize = htonll(totalSize);
-            req.crc32 = htonl(crc32);
+            req.crc32 = htonl(crc32Val);
 
             if (!sendPacket(m_sock, MSG_UPLOAD_REQ, &req, sizeof(req))) {
                 emit uploadFinished(false, "发送上传请求失败");
@@ -214,9 +221,23 @@ void MainWidget::onUploadClicked()
             emit uploadProgress(static_cast<quint64>(sentSize), static_cast<quint64>(totalSize));
             ++seq;
         }
+
+        uint16_t finishId;
+        std::vector<char> finishData;
+        bool hasResp = recvPacket(m_sock, finishId, finishData, m_recvBuffer);
         }
 
         file.close();
+
+        if (!hasResp) {
+            emit uploadFinished(false, "上传完成但未收到服务端确认");
+            return;
+        }
+        if (finishId == MSG_RESP_ERR) {
+            emit uploadFinished(false, "上传失败，服务端CRC校验不匹配");
+            return;
+        }
+
         emit uploadFinished(true, "上传完成");
     });
 }
@@ -243,6 +264,7 @@ void MainWidget::onDownloadClicked()
 
     m_workThread = std::thread([this, savePath, fileNameUtf8]() {
         std::lock_guard<std::mutex> lock(m_ioMtx);
+        m_recvBuffer.clear();
 
         DownloadReq req = {};
         strncpy_s(req.fileName, sizeof(req.fileName), fileNameUtf8.constData(), sizeof(req.fileName) - 1);
@@ -267,6 +289,7 @@ void MainWidget::onDownloadClicked()
         DownloadRsp rsp;
         memcpy(&rsp, data.data(), sizeof(rsp));
         uint64_t fileSize = ntohll(rsp.fileSize);
+        uint32_t expectedCrc = ntohl(rsp.crc32);
 
         QFile file(savePath);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -280,6 +303,7 @@ void MainWidget::onDownloadClicked()
             return;
         }
 
+        CRC32 crc32;
         uint64_t totalReceived = 0;
         while (totalReceived < fileSize) {
             uint16_t chunkId;
@@ -328,11 +352,20 @@ void MainWidget::onDownloadClicked()
                 return;
             }
 
+            crc32.update(fileData, fileDataSize);
             totalReceived += fileDataSize;
             emit downloadProgress(static_cast<quint64>(totalReceived), static_cast<quint64>(fileSize));
         }
 
         file.close();
+
+        uint32_t actualCrc = crc32.final();
+        if (actualCrc != expectedCrc) {
+            QFile::remove(savePath);
+            emit downloadFinished(false, "文件校验失败，CRC32不匹配");
+            return;
+        }
+
         emit downloadFinished(true, "下载完成");
     });
 }
@@ -347,6 +380,7 @@ void MainWidget::onRefreshClicked()
 
     m_workThread = std::thread([this]() {
         std::lock_guard<std::mutex> lock(m_ioMtx);
+        m_recvBuffer.clear();
 
         if (!sendPacket(m_sock, MSG_GET_FILE_LIST, nullptr, 0)) {
             emit setStatus("请求文件列表失败");

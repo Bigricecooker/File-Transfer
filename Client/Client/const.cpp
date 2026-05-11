@@ -5,8 +5,6 @@
 #include <cstdio>
 #include <mutex>
 #include <string>
-#include <filesystem>
-#include <system_error>
 
 static bool sendAll(SOCKET sock, const char* buf, int len)
 {
@@ -35,11 +33,13 @@ bool sendPacket(SOCKET sock, uint16_t id, const void* data, uint32_t len)
 
 bool recvPacket(SOCKET sock, uint16_t& out_id, std::vector<char>& out_data, std::vector<char>& recvBuf)
 {
-    while (true) {
-        if (recvBuf.size() >= sizeof(MsgHeader)) {
-            MsgHeader* hdr = reinterpret_cast<MsgHeader*>(recvBuf.data());
-            uint32_t len = ntohl(hdr->len);
-            if (recvBuf.size() >= sizeof(MsgHeader) + len) {
+	while (true) {
+		if (recvBuf.size() >= sizeof(MsgHeader)) {
+			MsgHeader* hdr = reinterpret_cast<MsgHeader*>(recvBuf.data());
+			uint32_t len = ntohl(hdr->len);
+			if (len > FTA_MAX_PAYLOAD)
+				return false;
+			if (recvBuf.size() >= sizeof(MsgHeader) + len) {
                 out_id = ntohs(hdr->id);
                 out_data.assign(recvBuf.begin() + sizeof(MsgHeader),
                     recvBuf.begin() + sizeof(MsgHeader) + len);
@@ -57,25 +57,32 @@ bool recvPacket(SOCKET sock, uint16_t& out_id, std::vector<char>& out_data, std:
     }
 }
 
-uint32_t calculateCRC32(const QByteArray& data)
+uint32_t CRC32::s_table[256];
+std::once_flag CRC32::s_tableInit;
+
+CRC32::CRC32()
+    : m_crc(0xFFFFFFFF)
 {
-    static uint32_t table[256];
-    static bool init = false;
-    if (!init) {
+    std::call_once(s_tableInit, []() {
         for (int i = 0; i < 256; ++i) {
             uint32_t c = i;
             for (int j = 0; j < 8; ++j)
                 c = (c & 1) ? (c >> 1) ^ 0xEDB88320 : (c >> 1);
-            table[i] = c;
+            s_table[i] = c;
         }
-        init = true;
-    }
+    });
+}
 
-    uint32_t crc = 0xFFFFFFFF;
-    const uint8_t* p = reinterpret_cast<const uint8_t*>(data.constData());
-    for (int i = 0; i < data.size(); ++i)
-        crc = table[(crc ^ p[i]) & 0xFF] ^ (crc >> 8);
-    return crc ^ 0xFFFFFFFF;
+void CRC32::update(const void* data, size_t len)
+{
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < len; ++i)
+        m_crc = s_table[(m_crc ^ p[i]) & 0xFF] ^ (m_crc >> 8);
+}
+
+uint32_t CRC32::final()
+{
+    return m_crc ^ 0xFFFFFFFF;
 }
 
 

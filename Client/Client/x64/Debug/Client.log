@@ -1,19 +1,7 @@
 ﻿   Qt/MSBuild: 3.5.0.0
-  Reading Qt configuration (D:/Qt5/5.15.2/msvc2019_64/bin/qmake)
    Qt: 5.15.2
-  uic Client.ui
-  uic MainWidget.ui
-  rcc Client.qrc
-  moc Client.h
-  moc MainWidget.h
-   RCC: Warning: No resources in 'D:\VS项目\File Transfer\File Transfer\Client\Client\Client.qrc'.
-  const.cpp
-  MainWidget.cpp
   Client.cpp
-  main.cpp
-D:\VS\Community\VC\Tools\MSVC\14.50.35717\include\filesystem(12): warning STL4038: The contents of <filesystem> are available only with C++17 or later.
-D:\VS项目\File Transfer\File Transfer\Client\Client\MainWidget.cpp(208,80): warning C4267: “参数”: 从“size_t”转换到“uint32_t”，可能丢失数据
-  qrc_Client.cpp
-  moc_Client.cpp
-  moc_MainWidget.cpp
+  MainWidget.cpp
+  const.cpp
+D:\VS项目\File Transfer\File Transfer\Client\Client\MainWidget.cpp(214,80): warning C4267: “参数”: 从“size_t”转换到“uint32_t”，可能丢失数据
   Client.vcxproj -> D:\VS项目\File Transfer\File Transfer\Client\x64\Debug\Client.exe

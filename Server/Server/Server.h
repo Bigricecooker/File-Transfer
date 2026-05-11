@@ -197,7 +197,6 @@ private:
 	std::wstring m_logPath = L"server.log";
 	std::map<std::string, std::string> m_users;// 用户认证信息，user->pass
 	mutable std::mutex m_logMtx;
-	mutable std::mutex m_usersMtx;
 
 	WSADATA m_wsa{};
 };
