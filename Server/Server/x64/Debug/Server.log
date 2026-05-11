@@ -1,0 +1,7 @@
+﻿  mian.cpp
+  MyCProFile.cpp
+  Server.cpp
+D:\VS项目\File Transfer\File Transfer\Server\Server\Server.cpp(733,22): warning C4267: “初始化”: 从“size_t”转换到“uint32_t”，可能丢失数据
+  ThreadPool.cpp
+  正在生成代码...
+  Server.vcxproj -> D:\VS项目\File Transfer\File Transfer\Server\x64\Debug\Server.exe

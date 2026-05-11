@@ -1,0 +1,8 @@
+# Visual Studio 缓存文件夹
+.vs/
+
+# 服务端文件存放文件夹
+.storage/
+
+# 日志文件夹
+.logs/

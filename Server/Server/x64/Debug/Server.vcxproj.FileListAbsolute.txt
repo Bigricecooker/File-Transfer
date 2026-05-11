@@ -1,0 +1,4 @@
+D:\VS项目\FileTransferAssistant - 副本\Server\x64\Debug\Server.exe
+D:\VS项目\test\Server\x64\Debug\Server.exe
+D:\VS项目\File Transfer\Server\Server\x64\Debug\Server.exe
+D:\VS项目\File Transfer\File Transfer\Server\Server\x64\Debug\Server.exe
