@@ -146,101 +146,131 @@ void MainWidget::onSetStatus(const QString& msg)
 
 void MainWidget::onUploadClicked()
 {
-    QString filePath = QFileDialog::getOpenFileName(this, "选择要上传的文件");
-    if (filePath.isEmpty()) return;
+    QStringList filePaths = QFileDialog::getOpenFileNames(this, "选择要上传的文件");
+    if (filePaths.isEmpty()) return;
 
     if (m_workThread.joinable())
         m_workThread.join();
 
     setButtonsEnabled(false);
-    m_lblStatus->setText("准备上传文件...");
+    m_lblStatus->setText(QString("准备上传 %1 个文件...").arg(filePaths.size()));
 
-    m_workThread = std::thread([this, filePath]() {
-        QFile file(filePath);
-        if (!file.open(QIODevice::ReadOnly)) {
-            emit uploadFinished(false, "无法打开文件");
-            return;
-        }
+    m_workThread = std::thread([this, filePaths]() {
+        int successCount = 0;
+        int failCount = 0;
+        int total = filePaths.size();
 
-        uint64_t totalSize = file.size();
-        QString fileName = QFileInfo(filePath).fileName();
-        QByteArray fileNameUtf8 = fileName.toUtf8();
-
-        CRC32 crc32;
-        char buf[65536];
-        while (!file.atEnd()) {
-            qint64 n = file.read(buf, sizeof(buf));
-            if (n <= 0) break;
-            crc32.update(buf, static_cast<size_t>(n));
-        }
-        uint32_t crc32Val = crc32.final();
-        file.seek(0);
-
-        uint16_t finishId;
-        std::vector<char> finishData;
-        bool hasResp = false;
-
+        for (int i = 0; i < total; ++i)
         {
-            std::lock_guard<std::mutex> lock(m_ioMtx);
-            m_recvBuffer.clear();
+            const QString& filePath = filePaths[i];
+            QString fileName = QFileInfo(filePath).fileName();
+            emit setStatus(QString("[%1/%2] 上传中: %3").arg(i + 1).arg(total).arg(fileName));
+            emit uploadProgress(0, 1);
 
-            UploadReq req = {};
-            strncpy_s(req.fileName, sizeof(req.fileName), fileNameUtf8.constData(), sizeof(req.fileName) - 1);
-            req.fileSize = htonll(totalSize);
-            req.crc32 = htonl(crc32Val);
-
-            if (!sendPacket(m_sock, MSG_UPLOAD_REQ, &req, sizeof(req))) {
-                emit uploadFinished(false, "发送上传请求失败");
-                return;
+            QFile file(filePath);
+            if (!file.open(QIODevice::ReadOnly)) {
+                ++failCount;
+                continue;
             }
 
-            uint16_t id;
-            std::vector<char> data;
-            if (!recvPacket(m_sock, id, data, m_recvBuffer) || id != MSG_RESP_OK) {
-                emit uploadFinished(false, "服务器拒绝上传请求");
-                return;
+            uint64_t totalSize = file.size();
+            QByteArray fileNameUtf8 = fileName.toUtf8();
+
+            CRC32 crc32;
+            char buf[65536];
+            while (!file.atEnd()) {
+                qint64 n = file.read(buf, sizeof(buf));
+                if (n <= 0) break;
+                crc32.update(buf, static_cast<size_t>(n));
+            }
+            uint32_t crc32Val = crc32.final();
+            file.seek(0);
+
+            bool fileFailed = false;
+            bool socketError = false;
+
+            {
+                std::lock_guard<std::mutex> lock(m_ioMtx);
+                m_recvBuffer.clear();
+
+                UploadReq req = {};
+                strncpy_s(req.fileName, sizeof(req.fileName), fileNameUtf8.constData(), sizeof(req.fileName) - 1);
+                req.fileSize = htonll(totalSize);
+                req.crc32 = htonl(crc32Val);
+
+                if (!sendPacket(m_sock, MSG_UPLOAD_REQ, &req, sizeof(req))) {
+                    file.close();
+                    fileFailed = true;
+                    socketError = true;
+                }
+
+                if (!fileFailed) {
+                    uint16_t id;
+                    std::vector<char> data;
+                    if (!recvPacket(m_sock, id, data, m_recvBuffer) || id != MSG_RESP_OK) {
+                        file.close();
+                        fileFailed = true;
+                    }
+                }
+
+                if (!fileFailed) {
+                    uint64_t sentSize = 0;
+                    uint32_t seq = 0;
+
+                    while (!file.atEnd()) {
+                        QByteArray chunk = file.read(chunkSize);
+                        if (chunk.isEmpty()) break;
+
+                        size_t dataLen = chunk.size();
+                        std::vector<uint8_t> buffer(sizeof(UploadDataHeader) + dataLen);
+
+                        UploadDataHeader hdr;
+                        hdr.seq = htonl(seq);
+                        memcpy(buffer.data(), &hdr, sizeof(hdr));
+                        memcpy(buffer.data() + sizeof(hdr), chunk.constData(), dataLen);
+
+                        if (!sendPacket(m_sock, MSG_UPLOAD_DATA, buffer.data(), buffer.size())) {
+                            file.close();
+                            fileFailed = true;
+                            socketError = true;
+                            break;
+                        }
+
+                        sentSize += dataLen;
+                        emit uploadProgress(static_cast<quint64>(sentSize), static_cast<quint64>(totalSize));
+                        ++seq;
+                    }
+
+                    if (!fileFailed) {
+                        uint16_t finishId;
+                        std::vector<char> finishData;
+                        if (!recvPacket(m_sock, finishId, finishData, m_recvBuffer)) {
+                            fileFailed = true;
+                            socketError = true;
+                        } else if (finishId == MSG_RESP_ERR) {
+                            fileFailed = true;
+                        }
+                    }
+                }
             }
 
-        uint64_t sentSize = 0;
-        uint32_t seq = 0;
+            file.close();
 
-        while (!file.atEnd()) {
-            QByteArray chunk = file.read(chunkSize);
-            if (chunk.isEmpty()) break;
-
-            size_t dataLen = chunk.size();
-            std::vector<uint8_t> buffer(sizeof(UploadDataHeader) + dataLen);
-
-            UploadDataHeader hdr;
-            hdr.seq = htonl(seq);
-            memcpy(buffer.data(), &hdr, sizeof(hdr));
-            memcpy(buffer.data() + sizeof(hdr), chunk.constData(), dataLen);
-
-            if (!sendPacket(m_sock, MSG_UPLOAD_DATA, buffer.data(), buffer.size())) {
-                emit uploadFinished(false, "发送文件数据失败");
-                return;
+            if (socketError) {
+                failCount = total - i;
+                emit setStatus(QString("网络错误，剩余 %1 个文件已跳过").arg(failCount));
+                break;
             }
 
-            sentSize += dataLen;
-            emit uploadProgress(static_cast<quint64>(sentSize), static_cast<quint64>(totalSize));
-            ++seq;
+            if (fileFailed) {
+                ++failCount;
+            } else {
+                ++successCount;
+            }
         }
 
-        hasResp = recvPacket(m_sock, finishId, finishData, m_recvBuffer);
-        }
-
-        file.close();
-
-        if (!hasResp) {
-            emit uploadFinished(false, "上传完成但未收到服务端确认");
-            return;
-        }
-        if (finishId == MSG_RESP_ERR) {
-            emit uploadFinished(false, "上传失败，服务端CRC校验不匹配");
-            return;
-        }
-
-        emit uploadFinished(true, "上传完成");
+        QString summary = QString("上传完成: %1 成功, %2 失败").arg(successCount).arg(failCount);
+        emit uploadFinished(failCount == 0, summary);
     });
 }
 
