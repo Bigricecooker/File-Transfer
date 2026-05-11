@@ -1,5 +1,8 @@
-# Visual Studio 缓存文件夹
+# Visual Studio
 .vs/
+*.suo
+*.user
+*.sln.docstates
 
 # 服务端文件存放文件夹
 storage/
@@ -9,3 +12,11 @@ logs/
 
 # 编译输出
 x64/
+Debug/
+Release/
+*.obj
+*.pdb
+*.ilk
+*.tlog
+*.log
+*.lastbuildstate

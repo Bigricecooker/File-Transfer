@@ -1,7 +1,7 @@
 ﻿   Qt/MSBuild: 3.5.0.0
    Qt: 5.15.2
-  Client.cpp
   MainWidget.cpp
-  const.cpp
-D:\VS项目\File Transfer\File Transfer\Client\Client\MainWidget.cpp(214,80): warning C4267: “参数”: 从“size_t”转换到“uint32_t”，可能丢失数据
+D:\VS项目\File Transfer\File Transfer\Client\Client\MainWidget.cpp(219,80): warning C4267: “参数”: 从“size_t”转换到“uint32_t”，可能丢失数据
+  moc_Client.cpp
+  moc_MainWidget.cpp
   Client.vcxproj -> D:\VS项目\File Transfer\File Transfer\Client\x64\Debug\Client.exe

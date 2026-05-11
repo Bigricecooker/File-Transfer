@@ -176,6 +176,10 @@ void MainWidget::onUploadClicked()
         uint32_t crc32Val = crc32.final();
         file.seek(0);
 
+        uint16_t finishId;
+        std::vector<char> finishData;
+        bool hasResp = false;
+
         {
             std::lock_guard<std::mutex> lock(m_ioMtx);
             m_recvBuffer.clear();
@@ -222,9 +226,7 @@ void MainWidget::onUploadClicked()
             ++seq;
         }
 
-        uint16_t finishId;
-        std::vector<char> finishData;
-        bool hasResp = recvPacket(m_sock, finishId, finishData, m_recvBuffer);
+        hasResp = recvPacket(m_sock, finishId, finishData, m_recvBuffer);
         }
 
         file.close();

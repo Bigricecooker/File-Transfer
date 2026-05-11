@@ -666,7 +666,20 @@ void Server::HandleUploadReq(Task& task, ClientContext& ctx)
 	}
 
 	const uint64_t totalSize = ntohll(req.fileSize);
-	
+
+	// 检查文件是否已存在
+	if (GetFileAttributesW(fullPath.c_str()) != INVALID_FILE_ATTRIBUTES) {
+		WriteLog("[UPLOAD_REQ] sock=%llu file=%s REJECTED: already exists",
+			(unsigned long long)ctx.sock, rawName.c_str());
+		printf("[%s] [RECV UPLOAD_REQ] file=%s REJECTED: already exists\n",
+			GetDateTimeStr().c_str(), rawName.c_str());
+		MsgHeader hdr;
+		hdr.id = htons(MSG_RESP_ERR);
+		hdr.len = htonl(0);
+		const uint8_t* p = reinterpret_cast<const uint8_t*>(&hdr);
+		ctx.sendBuf.insert(ctx.sendBuf.end(), p, p + sizeof(hdr));
+		return;
+	}
 
 	// 创建文件（覆盖写）
 	HANDLE hFile = CreateFileW(
