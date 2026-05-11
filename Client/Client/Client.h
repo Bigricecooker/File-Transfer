@@ -48,12 +48,12 @@ private slots:
 	/// <summary>
 	/// 登录失败处理函数
 	/// </summary>
-	/// <param name="message"></param>
+	/// <param name="message">失败消息</param>
 	void onLoginFailed(const QString& message);
 	/// <summary>
 	/// 登录成功处理函数
 	/// </summary>
-	/// <param name="sock"></param>
+	/// <param name="sock">成功的套接字</param>
 	void onLoginSuccess(SOCKET sock);
 };
 

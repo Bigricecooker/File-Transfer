@@ -84,5 +84,3 @@ uint32_t CRC32::final()
 {
     return m_crc ^ 0xFFFFFFFF;
 }
-
-

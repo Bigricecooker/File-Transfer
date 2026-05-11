@@ -220,8 +220,7 @@ void Server::Start()
 		return;
 	}
 
-	size_t threads = std::max<size_t>(2, std::thread::hardware_concurrency());
-	m_pool.Start(threads);
+	m_pool.Start(2, std::max<size_t>(4, std::thread::hardware_concurrency()));
 
 	std::cout << "Server listening on port " << m_port << std::endl;
 	WriteLog("[SERVER] Started on port %u", m_port);

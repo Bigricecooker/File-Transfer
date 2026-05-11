@@ -33,41 +33,34 @@ public:
 	/// 初始化服务器，加载用户认证信息等准备工作
 	/// </summary>
 	void init();
-
 	/// <summary>
 	/// 设置监听端口
 	/// </summary>
-	/// <param name="port"></param>
+	/// <param name="port">监听端口号</param>
 	void SetListenPort(unsigned short port);
-
 	/// <summary>
 	/// 设置文件存储目录
 	/// </summary>
-	/// <param name="dir"></param>
+	/// <param name="dir">文件存储目录路径</param>
 	void SetStorageDir(std::wstring dir);
-
 	/// <summary>
 	/// 设置用户认证文件路径
 	/// </summary>
-	/// <param name="path"></param>
+	/// <param name="path">用户认证文件路径</param>
 	void SetUsersIniPath(std::wstring path);
-
 	/// <summary>
 	/// 设置日志文件路径
 	/// </summary>
-	/// <param name="path"></param>
+	/// <param name="path">日志文件路径</param>
 	void SetLogPath(std::wstring path);
-
 	/// <summary>
 	/// 开始服务
 	/// </summary>
 	void Start();
-
     /// <summary>
 	/// 关闭服务
     /// </summary>
     void Stop();
-
 
 private:
 	struct ClientContext
@@ -117,23 +110,19 @@ private:
 	/// </summary>
 	/// <returns></returns>
 	bool InitWinsock();
-
 	/// <summary>
 	/// 清理Winsock库
 	/// </summary>
 	void CleanupWinsock();
-
 	/// <summary>
 	/// 创建并设置为监听状态的套接字，用于接收传入连接。
 	/// </summary>
 	/// <returns></returns>
 	bool CreateListenSocket();
-
 	/// <summary>
 	/// 关闭监听套接字
 	/// </summary>
 	void CloseListenSocket() ;
-
 	/// <summary>
 	/// 事件循环，使用select监视套接字事件
 	/// </summary>
@@ -142,43 +131,91 @@ private:
 	/// 接收新连接，并将其添加到客户端列表中
 	/// </summary>
 	void AcceptNewClient();
+	/// <summary>
+	///  读取客户端数据
+	/// </summary>
+	/// <param name="s">客户端套接字</param>
 	void HandleReadable(SOCKET s);
+	/// <summary>
+	/// 写入客户端数据
+	/// </summary>
+	/// <param name="s">客户端套接字</param>
 	void HandleWritable(SOCKET s);
-
 	/// <summary>
 	/// 关闭客户端连接，释放相关资源，并从客户端列表中移除
 	/// </summary>
-	/// <param name="s"></param>
-	/// <param name="reason"></param>
+	/// <param name="s">客户端套接字</param>
+	/// <param name="reason">关闭原因</param>
 	void DisconnectClient(SOCKET s, const char* reason);
-
-	// protocol helpers
 
 	/// <summary>
 	/// 解析客户端发送的数据包，提取消息ID和消息体，并将其封装为任务对象以供逻辑处理函数使用。
 	/// </summary>
-	/// <param name="ctx"></param>
-	/// <param name="outTasks"></param>
+	/// <param name="ctx">客户端上下文</param>
+	/// <param name="outTasks">输出任务列表</param>
 	/// <returns></returns>
 	bool TryParsePackets(ClientContext& ctx, std::vector<Task>& outTasks);
 
+	/// <summary>
+	/// 发送客户端待发数据
+	/// </summary>
+	/// <param name="ctx">客户端上下文</param>
+	/// <returns></returns>
 	bool SendPending(ClientContext& ctx);
-	
+	/// <summary>
+	/// 从套接字读取数据到接收缓冲区
+	/// </summary>
+	/// <param name="ctx">客户端上下文</param>
+	/// <returns></returns>
 	bool ReadIntoBuffer(ClientContext& ctx);
 	
 	/// <summary>
 	/// 任务处理函数，实际项目中应该根据msgId分发到不同的处理函数
 	/// </summary>
-	/// <param name="task"></param>
+	/// <param name="task">任务对象</param>
 	void ProcessTask(Task task);
+	/// <summary>
+	/// 登录请求处理函数
+	/// </summary>
+	/// <param name="task">任务对象</param>
+	/// <param name="ctx">客户端上下文</param>
 	void HandleLogin(Task& task, ClientContext& ctx);
-	void HandleUploadReq(Task& task, ClientContext& ctx);// 上传请求处理函数
-	void HandleUploadData(Task& task, ClientContext& ctx);// 上传数据处理函数
+	/// <summary>
+	/// 上传请求处理函数
+	/// </summary>
+	/// <param name="task">任务对象</param>
+	/// <param name="ctx">客户端上下文</param>
+	void HandleUploadReq(Task& task, ClientContext& ctx);// 
+	/// <summary>
+	/// 上传数据处理函数
+	/// </summary>
+	/// <param name="task">任务对象</param>
+	/// <param name="ctx">客户端上下文</param>
+	void HandleUploadData(Task& task, ClientContext& ctx);
+	/// <summary>
+	/// 刷新文件列表请求处理函数
+	/// </summary>
+	/// <param name="task">任务对象</param>
+	/// <param name="ctx">客户端上下文</param>
 	void HandleRefreshReq(Task& task, ClientContext& ctx);
-	void HandleDownloadReq(Task& task, ClientContext& ctx);// 下载请求处理函数
-	void QueueNextDownloadChunk(ClientContext& ctx);// 排队发送下一个下载分片
+	/// <summary>
+	/// 下载请求处理函数
+	/// </summary>
+	/// <param name="task">任务对象</param>
+	/// <param name="ctx">客户端上下文</param>
+	void HandleDownloadReq(Task& task, ClientContext& ctx);
+	/// <summary>
+	/// 排队发送下一个下载分片
+	/// </summary>
+	/// <param name="ctx">客户端上下文</param>
+	void QueueNextDownloadChunk(ClientContext& ctx);
 
-	void WriteLog(const char* fmt, ...);// 写入日期日志文件
+	/// <summary>
+	/// 写入日期日志文件
+	/// </summary>
+	/// <param name="fmt">格式化字符串</param>
+	/// <param name="...">可变参数</param>
+	void WriteLog(const char* fmt, ...);
 
 
 	unsigned short m_port;// 监听端口
